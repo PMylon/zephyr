@@ -271,6 +271,8 @@
 						 BIT(1) | BIT(0))
 #define LSM6DS0_SHIFT_FIFO_CTRL_FTH		0
 
+#define LSM6DS0_FIFO_CONTINUOUS_MODE            0x06
+
 #define LSM6DS0_REG_FIFO_SRC                    0x2F
 #define LSM6DS0_MASK_FIFO_SRC_FTH		BIT(7)
 #define LSM6DS0_SHIFT_FIFO_SRC_FTH		7
@@ -459,19 +461,25 @@
 	#define LSM6DS0_DEFAULT_GYRO_SAMPLING_RATE	6
 #endif
 
+#define LSM6DS0_MAX_FIFO_SIZE      32
+
 struct lsm6ds0_config {
 	struct i2c_dt_spec i2c;
 };
 
 struct lsm6ds0_data {
+#if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_X_AXIS) || defined(CONFIG_LSM6DS0_ACCEL_ENABLE_Y_AXIS) || defined(CONFIG_LSM6DS0_ACCEL_ENABLE_Z_AXIS)
+	unsigned int accel_sample_number;
+#endif
+
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_X_AXIS)
-	int accel_sample_x;
+	int16_t accel_bufx[LSM6DS0_MAX_FIFO_SIZE];
 #endif
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_Y_AXIS)
-	int accel_sample_y;
+	int16_t accel_bufy[LSM6DS0_MAX_FIFO_SIZE];
 #endif
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_Z_AXIS)
-	int accel_sample_z;
+	int16_t accel_bufz[LSM6DS0_MAX_FIFO_SIZE];
 #endif
 
 #if defined(CONFIG_LSM6DS0_GYRO_ENABLE_X_AXIS)

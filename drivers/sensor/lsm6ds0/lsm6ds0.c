@@ -122,29 +122,46 @@ static int lsm6ds0_gyro_set_odr_raw(const struct device *dev, uint8_t odr)
 
 static int lsm6ds0_sample_fetch_accel(const struct device *dev)
 {
+	int rc;
 	struct lsm6ds0_data *data = dev->data;
 	const struct lsm6ds0_config *config = dev->config;
 	uint8_t buf[6];
+	uint8_t samples_count = 0;
 
-	if (i2c_burst_read_dt(&config->i2c, LSM6DS0_REG_OUT_X_L_XL, buf, sizeof(buf)) < 0) {
-		LOG_DBG("failed to read sample");
-		return -EIO;
+	data->accel_sample_number = 0;
+
+	rc = i2c_reg_read_byte_dt(&config->i2c, LSM6DS0_REG_FIFO_SRC,
+                           &samples_count);
+
+	if (rc < 0) {
+		LOG_DBG("failed to read FIFO status rc = %d\n", rc);
+		return rc;
 	}
 
+	samples_count = (samples_count & LSM6DS0_MASK_FIFO_SRC_FSS) >> LSM6DS0_SHIFT_FIFO_SRC_FSS;
+
+	__ASSERT_NO_MSG(samples_count <= LSM6DS0_MAX_FIFO_SIZE);
+
+	for (uint8_t s = 0; s < samples_count; s++) {
+		rc = i2c_burst_read_dt(&config->i2c,LSM6DS0_REG_OUT_X_L_XL, buf, sizeof(buf));
+
+		if (rc < 0) {
+			LOG_DBG("failed to read sample rc = %d\n", rc);
+			return rc;
+		}
+
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_X_AXIS)
-	data->accel_sample_x = (int16_t)((uint16_t)(buf[0]) |
-				((uint16_t)(buf[1]) << 8));
+		data->accel_bufx[s] = (int16_t)((uint16_t)(buf[0]) | ((uint16_t)(buf[1]) << 8));
 #endif
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_Y_AXIS)
-	data->accel_sample_y = (int16_t)((uint16_t)(buf[2]) |
-				((uint16_t)(buf[3]) << 8));
+		data->accel_bufy[s] = (int16_t)((uint16_t)(buf[2]) | ((uint16_t)(buf[3]) << 8));
 #endif
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_Z_AXIS)
-	data->accel_sample_z = (int16_t)((uint16_t)(buf[4]) |
-				((uint16_t)(buf[5]) << 8));
+		data->accel_bufz[s] = (int16_t)((uint16_t)(buf[4]) | ((uint16_t)(buf[5]) << 8));
 #endif
+	}
 
-	return 0;
+	return samples_count;
 }
 
 static int lsm6ds0_sample_fetch_gyro(const struct device *dev)
@@ -247,28 +264,28 @@ static inline int lsm6ds0_accel_get_channel(enum sensor_channel chan,
 	switch (chan) {
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_X_AXIS)
 	case SENSOR_CHAN_ACCEL_X:
-		lsm6ds0_accel_convert(val, data->accel_sample_x, scale);
+		lsm6ds0_accel_convert(val, data->accel_bufx[data->accel_sample_number], scale);
 		break;
 #endif
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_Y_AXIS)
 	case SENSOR_CHAN_ACCEL_Y:
-		lsm6ds0_accel_convert(val, data->accel_sample_y, scale);
+		lsm6ds0_accel_convert(val, data->accel_bufy[data->accel_sample_number], scale);
 		break;
 #endif
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_Z_AXIS)
 	case SENSOR_CHAN_ACCEL_Z:
-		lsm6ds0_accel_convert(val, data->accel_sample_z, scale);
+		lsm6ds0_accel_convert(val, data->accel_bufz[data->accel_sample_number], scale);
 		break;
 #endif
 	case SENSOR_CHAN_ACCEL_XYZ:
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_X_AXIS)
-		lsm6ds0_accel_convert(val, data->accel_sample_x, scale);
+		lsm6ds0_accel_convert(val, data->accel_bufx[data->accel_sample_number], scale);
 #endif
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_Y_AXIS)
-		lsm6ds0_accel_convert(val + 1, data->accel_sample_y, scale);
+		lsm6ds0_accel_convert(val + 1, data->accel_bufy[data->accel_sample_number], scale);
 #endif
 #if defined(CONFIG_LSM6DS0_ACCEL_ENABLE_Z_AXIS)
-		lsm6ds0_accel_convert(val + 2, data->accel_sample_z, scale);
+		lsm6ds0_accel_convert(val + 2,data->accel_bufz[data->accel_sample_number], scale);
 #endif
 		break;
 	default:
@@ -456,6 +473,22 @@ static int lsm6ds0_init_chip(const struct device *dev)
 				   (1 << LSM6DS0_SHIFT_CTRL_REG8_IF_ADD_INC))
 				   < 0) {
 		LOG_DBG("failed to set BDU, BLE and burst");
+		return -EIO;
+	}
+
+	if (i2c_reg_update_byte_dt(&config->i2c, LSM6DS0_REG_CTRL_REG9,
+				LSM6DS0_MASK_CTRL_REG9_FIFO_EN,
+				(1 << LSM6DS0_SHIFT_CTRL_REG9_FIFO_EN))
+				< 0) {
+		LOG_DBG("failed to enable fifo");
+		return -EIO;
+	}
+
+	if (i2c_reg_update_byte_dt(&config->i2c, LSM6DS0_REG_FIFO_CTRL,
+				LSM6DS0_MASK_FIFO_CTRL_FMODE,
+				(LSM6DS0_FIFO_CONTINUOUS_MODE << LSM6DS0_SHIFT_FIFO_CTRL_FMODE))
+				< 0) {
+		LOG_DBG("failed to set fifo continuous mode");
 		return -EIO;
 	}
 
